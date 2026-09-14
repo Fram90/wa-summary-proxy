@@ -13,7 +13,9 @@
     "dev:web": "npm --prefix web run dev",
     "build": "tsc -p tsconfig.json && npm --prefix web run build",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && npm --prefix web run build -- --mode production"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "docker:up": "docker compose up -d --build",
+    "docker:logs": "docker compose logs -f"
   },
   "dependencies": {
     "@fastify/static": "^10.1.3",
