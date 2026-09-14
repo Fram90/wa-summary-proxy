@@ -24,6 +24,7 @@ export function formatRelative(tsSeconds: number | null): string {
   if (!tsSeconds) return 'никогда'
 
   const diffSeconds = Math.floor(Date.now() / 1000) - tsSeconds
+  if (diffSeconds < -60) return formatUntil(tsSeconds)
   if (diffSeconds < 60) return 'только что'
   if (diffSeconds < 3600) {
     const minutes = Math.floor(diffSeconds / 60)
@@ -36,6 +37,24 @@ export function formatRelative(tsSeconds: number | null): string {
   const days = Math.floor(diffSeconds / 86_400)
   if (days < 30) return `${countWithNoun(days, 'день', 'дня', 'дней')} назад`
   return formatDateTime(tsSeconds)
+}
+
+/** Для моментов в будущем: «через 4 часа». */
+export function formatUntil(tsSeconds: number): string {
+  const diffSeconds = tsSeconds - Math.floor(Date.now() / 1000)
+  if (diffSeconds <= 60) return 'вот-вот'
+
+  if (diffSeconds < 3600) {
+    const minutes = Math.round(diffSeconds / 60)
+    return `через ${countWithNoun(minutes, 'минуту', 'минуты', 'минут')}`
+  }
+  if (diffSeconds < 86_400) {
+    const hours = Math.round(diffSeconds / 3600)
+    return `через ${countWithNoun(hours, 'час', 'часа', 'часов')}`
+  }
+
+  const days = Math.round(diffSeconds / 86_400)
+  return `через ${countWithNoun(days, 'день', 'дня', 'дней')}`
 }
 
 export function formatPeriod(from: number, to: number): string {

@@ -33,6 +33,20 @@ export interface ServerDeps {
 export async function createServer(deps: ServerDeps) {
   const app = Fastify({ logger: false, bodyLimit: 1_000_000 })
 
+  // Часть запросов не имеет тела вовсе, но приходит с заголовком JSON — не считаем это ошибкой.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body, done) => {
+    const raw = typeof body === 'string' ? body.trim() : ''
+    if (raw.length === 0) return done(null, {})
+
+    try {
+      done(null, JSON.parse(raw))
+    } catch {
+      const error = new Error('Тело запроса не является корректным JSON') as Error & { statusCode?: number }
+      error.statusCode = 400
+      done(error, undefined)
+    }
+  })
+
   app.addHook('onRequest', async (request, reply) => {
     if (!request.url.startsWith('/api/') || request.url.startsWith('/api/health')) return
     if (!config.DASHBOARD_TOKEN) return

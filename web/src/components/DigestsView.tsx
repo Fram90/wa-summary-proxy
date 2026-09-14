@@ -31,16 +31,24 @@ export function DigestsView({
   trackedChats,
   defaultHours,
   onChanged,
+  onReadingChange,
 }: {
   digests: Digest[] | null
   loading: boolean
   trackedChats: number
   defaultHours: number
   onChanged: () => Promise<void>
+  onReadingChange: (reading: boolean) => void
 }) {
   const [hours, setHours] = useState(String(defaultHours))
   const [running, setRunning] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
+
+  const toggleOpen = (id: number) => {
+    const next = openId === id ? null : id
+    setOpenId(next)
+    onReadingChange(next !== null)
+  }
 
   const runAll = async () => {
     setRunning(true)
@@ -120,7 +128,7 @@ export function DigestsView({
                   <button
                     type="button"
                     className="flex w-full flex-col gap-2 p-4 text-left hover:bg-secondary/40"
-                    onClick={() => setOpenId(open ? null : digest.id)}
+                    onClick={() => toggleOpen(digest.id)}
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{digest.chat_name ?? digest.chat_jid}</span>

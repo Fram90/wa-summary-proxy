@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { FlaskConical, MessageSquareText } from 'lucide-react'
 import { api } from '@/lib/api'
 import { usePoll } from '@/hooks/usePoll'
@@ -14,9 +14,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Toaster } from '@/components/ui/sonner'
 
 export default function App() {
+  const [readingDigest, setReadingDigest] = useState(false)
   const state = usePoll(api.state, 4000)
   const chats = usePoll(() => api.chats(), 10_000)
-  const digests = usePoll(() => api.digests(), 10_000)
+  const digests = usePoll(() => api.digests(), 10_000, { paused: readingDigest })
 
   const refreshAll = useCallback(async () => {
     await Promise.all([state.refresh(), chats.refresh(), digests.refresh()])
@@ -52,7 +53,8 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      {/* Минимальная высота держит вёрстку при переключении вкладок с разным содержимым. */}
+      <main className="mx-auto min-h-[80vh] max-w-6xl px-4 py-6 sm:px-6">
         {state.error && !state.data && (
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm">
             Сервер не отвечает: {state.error}
@@ -99,6 +101,7 @@ export default function App() {
                 trackedChats={state.data.stats.trackedChats}
                 defaultHours={state.data.settings.digestWindowHours}
                 onChanged={refreshAll}
+                onReadingChange={setReadingDigest}
               />
             </TabsContent>
 

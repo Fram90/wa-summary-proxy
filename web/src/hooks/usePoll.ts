@@ -10,7 +10,11 @@ interface PollResult<T> {
 }
 
 /** Тянет данные с сервера и повторяет запрос по таймеру; ошибка не сбрасывает уже показанные данные. */
-export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollResult<T> {
+export function usePoll<T>(
+  fetcher: () => Promise<T>,
+  intervalMs: number,
+  options: { paused?: boolean } = {},
+): PollResult<T> {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [unauthorized, setUnauthorized] = useState(false)
@@ -34,11 +38,16 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollR
 
   useEffect(() => {
     void refresh()
-    if (intervalMs <= 0) return
+  }, [refresh])
+
+  // Пока пользователь читает раскрытый дайджест, обновление на паузе: иначе список
+  // перерисовывается и текст уезжает из-под курсора.
+  useEffect(() => {
+    if (intervalMs <= 0 || options.paused) return
 
     const timer = setInterval(() => void refresh(), intervalMs)
     return () => clearInterval(timer)
-  }, [refresh, intervalMs])
+  }, [refresh, intervalMs, options.paused])
 
   return { data, error, unauthorized, loading, refresh }
 }

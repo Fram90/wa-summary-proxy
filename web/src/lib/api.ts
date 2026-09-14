@@ -38,8 +38,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+// Тело отправляем всегда: POST с заголовком application/json и пустым телом Fastify считает битым запросом.
 const post = <T>(path: string, body?: unknown) =>
-  request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined })
+  request<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) })
 
 export const api = {
   state: () => request<AppState>('/state'),

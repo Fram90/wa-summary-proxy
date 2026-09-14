@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { AlertTriangle, Loader2, LogOut, Smartphone, Wand2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
-import { countWithNoun, formatRelative } from '@/lib/format'
+import { countWithNoun, formatUntil } from '@/lib/format'
 import type { AppState } from '@/lib/types'
 import { StatusPill } from '@/components/StatusPill'
 import { Button } from '@/components/ui/button'
@@ -240,8 +240,9 @@ export function ConnectionView({ state, onRefresh }: { state: AppState; onRefres
             </p>
             {state.nextRunAt && (
               <p className="text-xs text-muted-foreground">
-                Следующий плановый дайджест: {formatRelative(Math.floor(new Date(state.nextRunAt).getTime() / 1000))}{' '}
-                ({new Date(state.nextRunAt).toLocaleString('ru-RU')})
+                Следующий плановый дайджест {formatUntil(Math.floor(new Date(state.nextRunAt).getTime() / 1000))}
+                {' — '}
+                {new Date(state.nextRunAt).toLocaleString('ru-RU')}
               </p>
             )}
           </CardContent>
