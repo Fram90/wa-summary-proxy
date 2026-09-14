@@ -1,0 +1,30 @@
+# Вариант без Docker: systemd-юнит для запуска собранного приложения на VDS.
+# Установка:
+#   sudo cp deploy/wa-digest.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now wa-digest
+[Unit]
+Description=wa-digest — дайджесты чатов WhatsApp в Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wadigest
+WorkingDirectory=/opt/wa-digest
+EnvironmentFile=/opt/wa-digest/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Ключи сессии WhatsApp — чувствительные данные, ограничиваем процесс.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/wa-digest/data
+
+[Install]
+WantedBy=multi-user.target

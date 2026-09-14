@@ -1,0 +1,25 @@
+services:
+  wa-digest:
+    build: .
+    image: wa-digest:latest
+    container_name: wa-digest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 43117
+      DATA_DIR: /app/data
+      NODE_ENV: production
+    ports:
+      # Панель намеренно слушает только localhost: ходите через SSH-туннель
+      # ssh -L 43117:127.0.0.1:43117 user@ваш-vds
+      # Чтобы открыть её наружу, замените на "43117:43117" и обязательно задайте DASHBOARD_TOKEN.
+      - '127.0.0.1:43117:43117'
+    volumes:
+      # Ключи сессии WhatsApp и база сообщений. Потеряете том — придётся привязывать устройство заново.
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
