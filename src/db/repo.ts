@@ -8,6 +8,7 @@ export interface ChatRow {
   last_message_at: number | null
   message_count: number
   last_digest_at: number | null
+  extra_prompt: string | null
   created_at: number
 }
 
@@ -22,6 +23,7 @@ export interface MessageRow {
   text: string | null
   quoted_text: string | null
   mentions_me: number
+  media_json: string | null
   created_at: number
 }
 
@@ -55,6 +57,7 @@ export interface IncomingMessage {
   text: string | null
   quotedText?: string | null
   mentionsMe?: boolean
+  mediaJson?: string | null
 }
 
 const now = () => Math.floor(Date.now() / 1000)
@@ -69,12 +72,13 @@ const upsertChatStmt = db.prepare(`
 `)
 
 const insertMessageStmt = db.prepare(`
-  INSERT INTO messages (id, chat_jid, sender_jid, sender_name, ts, from_me, kind, text, quoted_text, mentions_me, created_at)
-  VALUES (@id, @chat_jid, @sender_jid, @sender_name, @ts, @from_me, @kind, @text, @quoted_text, @mentions_me, @created_at)
+  INSERT INTO messages (id, chat_jid, sender_jid, sender_name, ts, from_me, kind, text, quoted_text, mentions_me, media_json, created_at)
+  VALUES (@id, @chat_jid, @sender_jid, @sender_name, @ts, @from_me, @kind, @text, @quoted_text, @mentions_me, @media_json, @created_at)
   ON CONFLICT(id) DO UPDATE SET
     text = COALESCE(excluded.text, messages.text),
     sender_name = COALESCE(excluded.sender_name, messages.sender_name),
-    quoted_text = COALESCE(excluded.quoted_text, messages.quoted_text)
+    quoted_text = COALESCE(excluded.quoted_text, messages.quoted_text),
+    media_json = COALESCE(excluded.media_json, messages.media_json)
 `)
 
 const recountChatStmt = db.prepare(`
@@ -118,6 +122,7 @@ export const saveMessages = db.transaction((messages: IncomingMessage[]) => {
       text: message.text,
       quoted_text: message.quotedText ?? null,
       mentions_me: message.mentionsMe ? 1 : 0,
+      media_json: message.mediaJson ?? null,
       created_at: now(),
     })
 
@@ -163,6 +168,19 @@ export function getChat(jid: string): ChatRow | undefined {
 
 export function setChatTracked(jid: string, tracked: boolean) {
   db.prepare('UPDATE chats SET tracked = ? WHERE jid = ?').run(tracked ? 1 : 0, jid)
+}
+
+export function setChatPrompt(jid: string, prompt: string | null) {
+  const value = prompt?.trim() ? prompt.trim() : null
+  db.prepare('UPDATE chats SET extra_prompt = ? WHERE jid = ?').run(value, jid)
+}
+
+/** Конец периода последнего дайджеста: сообщения новее этой метки ещё не уходили в модель. */
+export function latestDigestEnd(chatJid: string): number | null {
+  const row = db
+    .prepare('SELECT MAX(period_end) AS ts FROM digests WHERE chat_jid = ?')
+    .get(chatJid) as { ts: number | null }
+  return row.ts
 }
 
 export function markChatDigested(jid: string, at: number) {

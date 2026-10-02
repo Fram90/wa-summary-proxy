@@ -1,15 +1,15 @@
-import { Bot, InlineKeyboard } from 'grammy'
+import { Bot, InlineKeyboard, InputFile } from 'grammy'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { getChat, listChats, setChatTracked, stats } from '../db/repo.js'
 import { getSettings, updateSettings } from '../settings.js'
-import type { DigestResult } from '../summarize/index.js'
+import type { DigestResult, DigestRunReport } from '../summarize/index.js'
 import { formatPeriod } from '../summarize/transcript.js'
 import type { WhatsappGateway } from '../whatsapp/types.js'
 import { markdownToTelegramHtml, splitMessage } from './format.js'
 
 export interface DigestRunner {
-  runForTrackedChats(options: { hours: number; trigger: 'telegram' | 'manual' }): Promise<DigestResult[]>
+  runForTrackedChats(options: { hours: number; trigger: 'telegram' | 'manual' }): Promise<DigestRunReport>
 }
 
 const statusLabels: Record<string, string> = {
@@ -199,10 +199,13 @@ export class TelegramNotifier {
 
       await ctx.reply(`Собираю выжимку за последние ${hours} ч, это займёт до минуты…`)
       try {
-        const digests = await this.runner.runForTrackedChats({ hours, trigger: 'telegram' })
-        if (digests.length === 0) {
+        const report = await this.runner.runForTrackedChats({ hours, trigger: 'telegram' })
+        if (report.digests.length === 0) {
+          const onlySeen = report.skipped.length > 0 && report.skipped.every((item) => item.reason === 'no_new')
           await ctx.reply(
-            'Новых сообщений за этот период нет — либо ни один чат не отмечен как отслеживаемый. Посмотрите /chats.',
+            onlySeen
+              ? 'С прошлого дайджеста новых сообщений нет — модель не вызывал.'
+              : 'Новых сообщений за этот период нет — либо ни один чат не отмечен как отслеживаемый. Посмотрите /chats.',
           )
         }
       } catch (error) {
@@ -254,6 +257,33 @@ export class TelegramNotifier {
     ].join('\n')
 
     await this.sendRaw(header + markdownToTelegramHtml(digest.summaryMd))
+    await this.forwardPhotos(digest)
+  }
+
+  /** Фото уходят как есть: модель их не видит и не описывает. */
+  private async forwardPhotos(digest: DigestResult): Promise<void> {
+    const chatId = this.chatId
+    if (!this.bot || !chatId || !this.gateway || digest.photos.length === 0) return
+
+    const timezone = getSettings().timezone
+    for (const photo of digest.photos) {
+      const file = await this.gateway.downloadImage(photo.chatJid, photo.messageId, photo.fromMe, photo.mediaJson)
+      const when = new Intl.DateTimeFormat('ru-RU', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: timezone,
+      }).format(photo.ts * 1000)
+      const who = photo.senderName ?? 'Участник'
+      if (!file) {
+        await this.sendRaw(`Не удалось переслать фото от ${who} (${when}).`)
+        continue
+      }
+
+      const caption = [digest.chatName, who, when, photo.caption].filter(Boolean).join('\n').slice(0, 1000)
+      await this.bot.api.sendPhoto(chatId, new InputFile(file.buffer, 'photo.jpg'), { caption })
+    }
   }
 
   async sendAlert(text: string): Promise<void> {

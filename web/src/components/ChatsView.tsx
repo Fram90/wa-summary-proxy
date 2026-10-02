@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, Eye, Loader2, MessagesSquare, Search, Sparkles, Users } from 'lucide-react'
+import { Download, Eye, Loader2, MessagesSquare, Search, Sparkles, SquarePen, Users } from 'lucide-react'
 import { toast } from 'sonner'
-import { api } from '@/lib/api'
+import { api, digestRunMessage } from '@/lib/api'
 import { countWithNoun, formatChatName, formatDateTime, formatRelative } from '@/lib/format'
 import type { Chat, Message } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 
 export function ChatsView({
   chats,
@@ -29,6 +31,7 @@ export function ChatsView({
   const [query, setQuery] = useState('')
   const [busyJid, setBusyJid] = useState<string | null>(null)
   const [preview, setPreview] = useState<Chat | null>(null)
+  const [promptChat, setPromptChat] = useState<Chat | null>(null)
 
   const filtered = useMemo(() => {
     if (!chats) return null
@@ -54,11 +57,9 @@ export function ChatsView({
     toast.info(`Собираю выжимку по «${formatChatName(chat)}»…`)
     try {
       const result = await api.runDigest({ chatJid: chat.jid, hours: windowHours })
-      if (result.digests.length === 0) {
-        toast.warning(`За последние ${windowHours} ч в этом чате нет сообщений`)
-      } else {
-        toast.success('Дайджест готов — смотрите вкладку «Дайджесты»')
-      }
+      const message = digestRunMessage(result)
+      if (message.ok) toast.success('Дайджест готов — смотрите вкладку «Дайджесты»')
+      else toast.warning(message.text)
       await onChanged()
     } catch (error) {
       toast.error((error as Error).message)
@@ -89,7 +90,7 @@ export function ChatsView({
             <div>
               <CardTitle>Чаты</CardTitle>
               <CardDescription>
-                Отметьте те, за которыми стоит следить. Дайджесты собираются только по отмеченным чатам.
+                Отметьте те, за которыми стоит следить. У чата может быть свой промпт — он добавляется только к его выжимке.
               </CardDescription>
             </div>
             <div className="relative w-full sm:w-72">
@@ -132,6 +133,11 @@ export function ChatsView({
                             следим
                           </Badge>
                         )}
+                        {chat.extra_prompt?.trim() && (
+                          <Badge variant="outline" className="shrink-0">
+                            свой промпт
+                          </Badge>
+                        )}
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {countWithNoun(chat.message_count, 'сообщение', 'сообщения', 'сообщений')}
@@ -143,6 +149,9 @@ export function ChatsView({
                     <div className="flex items-center gap-1.5">
                       <Button variant="ghost" size="icon-sm" title="Показать последние сообщения" onClick={() => setPreview(chat)}>
                         <Eye className="size-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon-sm" title="Промпт для этого чата" onClick={() => setPromptChat(chat)}>
+                        <SquarePen className="size-4" />
                       </Button>
                       {!demoMode && (
                         <Button
@@ -175,6 +184,12 @@ export function ChatsView({
       </Card>
 
       <MessagesPreview chat={preview} onClose={() => setPreview(null)} />
+      <PromptDialog
+        chat={promptChat}
+        windowHours={windowHours}
+        onClose={() => setPromptChat(null)}
+        onChanged={onChanged}
+      />
     </>
   )
 }
@@ -259,6 +274,82 @@ function MessagesPreview({ chat, onClose }: { chat: Chat | null; onClose: () => 
             </ul>
           </ScrollArea>
         )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function PromptDialog({
+  chat,
+  windowHours,
+  onClose,
+  onChanged,
+}: {
+  chat: Chat | null
+  windowHours: number
+  onClose: () => void
+  onChanged: () => Promise<void>
+}) {
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState<'save' | 'rerun' | null>(null)
+
+  useEffect(() => {
+    setDraft(chat?.extra_prompt ?? '')
+  }, [chat])
+
+  const save = async (rerun: boolean) => {
+    if (!chat) return
+    setBusy(rerun ? 'rerun' : 'save')
+    try {
+      await api.savePrompt(chat.jid, draft)
+      if (rerun) {
+        const result = await api.runDigest({ chatJid: chat.jid, hours: windowHours, force: true })
+        const message = digestRunMessage(result)
+        if (message.ok) toast.success('Промпт сохранён, дайджест пересобран')
+        else toast.warning(`Промпт сохранён. ${message.text}`)
+      } else {
+        toast.success('Промпт сохранён. Он применится к новым сообщениям')
+      }
+      await onChanged()
+      if (!rerun) onClose()
+    } catch (error) {
+      toast.error((error as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Dialog open={chat !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Промпт для «{chat ? formatChatName(chat) : ''}»</DialogTitle>
+          <DialogDescription>
+            Добавляется только к выжимке этого чата. В остальных чатах его нет. Новые фото отсюда уходят в Telegram
+            как есть — модель картинки не распознаёт. Повторный дайджест без новых сообщений модель не вызывает.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="chat-prompt">Дополнительные указания</Label>
+          <Textarea
+            id="chat-prompt"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            rows={7}
+            maxLength={4000}
+            placeholder="Если в переписке есть домашняя работа, вынеси её отдельным блоком «Домашняя работа»: что задали и к какому сроку. Если домашки не было, напиши «за период домашки не было»."
+          />
+        </div>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button variant="outline" disabled={busy !== null || !chat} onClick={() => void save(true)}>
+            {busy === 'rerun' ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            Применить к текущему окну
+          </Button>
+          <Button disabled={busy !== null || !chat} onClick={() => void save(false)}>
+            {busy === 'save' ? <Loader2 className="size-4 animate-spin" /> : null}
+            Сохранить
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

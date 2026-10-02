@@ -66,4 +66,14 @@ db.exec(`
   );
 `)
 
+function ensureColumn(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
+}
+
+ensureColumn('chats', 'extra_prompt', 'TEXT')
+ensureColumn('messages', 'media_json', 'TEXT')
+
 logger.debug({ dbPath: config.dbPath }, 'база готова')

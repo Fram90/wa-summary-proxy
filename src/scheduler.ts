@@ -37,11 +37,14 @@ export class Scheduler {
       async () => {
         logger.info('плановый дайджест: старт')
         try {
-          const digests = await this.service.runForTrackedChats({
+          const report = await this.service.runForTrackedChats({
             hours: getSettings().digestWindowHours,
             trigger: 'schedule',
           })
-          logger.info({ count: digests.length }, 'плановый дайджест: готово')
+          logger.info(
+            { count: report.digests.length, skipped: report.skipped.length },
+            'плановый дайджест: готово',
+          )
         } catch (error) {
           logger.error({ err: error }, 'плановый дайджест не собрался')
         }

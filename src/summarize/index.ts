@@ -1,10 +1,20 @@
 import OpenAI from 'openai'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
-import { getChat, getMessagesInWindow, insertDigest, markChatDigested, type MessageRow } from '../db/repo.js'
+import { getChat, getMessagesInWindow, insertDigest, latestDigestEnd, markChatDigested, type MessageRow } from '../db/repo.js'
 import { getSettings } from '../settings.js'
 import { chunkPrompt, reducePrompt, singlePassPrompt, systemPrompt } from './prompts.js'
 import { chunkMessages, formatPeriod, formatTranscript } from './transcript.js'
+
+export interface DigestPhoto {
+  messageId: string
+  chatJid: string
+  fromMe: boolean
+  mediaJson: string
+  senderName: string | null
+  ts: number
+  caption: string | null
+}
 
 export interface DigestResult {
   id: number
@@ -17,9 +27,31 @@ export interface DigestResult {
   model: string
   tokensIn: number
   tokensOut: number
+  photos: DigestPhoto[]
+}
+
+export type SkipReason = 'no_new' | 'empty'
+
+export interface DigestSkip {
+  chatJid: string
+  chatName: string
+  reason: SkipReason
+}
+
+export interface DigestRunReport {
+  digests: DigestResult[]
+  skipped: DigestSkip[]
 }
 
 export type DigestTrigger = 'schedule' | 'manual' | 'telegram'
+
+const MAX_FORWARDED_PHOTOS = 12
+
+/** Картинки и прочие вложения без подписи: модели тут нечего читать. */
+function isMediaPlaceholder(text: string | null): boolean {
+  const value = text?.trim() ?? ''
+  return /^\[(фото|стикер|гиф|видео|аудио|голосовое|геолокация|контакт|опрос)(\s[^\]]*)?\]$/.test(value)
+}
 
 let client: OpenAI | null = null
 
@@ -65,7 +97,7 @@ async function complete(model: string, userPrompt: string): Promise<CompletionRe
 }
 
 /** В демо-режиме без ключа собираем дайджест локально, чтобы сценарий можно было пройти целиком. */
-function fakeSummary(chatName: string, messages: MessageRow[]): string {
+function fakeSummary(chatName: string, messages: MessageRow[], extra?: string | null): string {
   const authors = new Map<string, number>()
   for (const message of messages) {
     const author = message.sender_name ?? 'Участник'
@@ -94,6 +126,9 @@ function fakeSummary(chatName: string, messages: MessageRow[]): string {
     '',
     '**Кто писал больше всех**',
     `- ${top.map(([name, count]) => `${name} (${count})`).join(', ')}`,
+    ...(extra?.trim()
+      ? ['', '**По вашему промпту**', '- демо-режим не вызывает модель; промпт применится, когда будет задан OPENAI_API_KEY']
+      : []),
   ].join('\n')
 }
 
@@ -102,32 +137,60 @@ export async function buildDigest(options: {
   from: number
   to: number
   trigger: DigestTrigger
-}): Promise<DigestResult | null> {
+  /** Повторно прогнать окно, даже если эти сообщения уже были в дайджесте. */
+  force?: boolean
+}): Promise<{ digest: DigestResult } | { skip: DigestSkip }> {
   const settings = getSettings()
   const chat = getChat(options.chatJid)
   const chatName = chat?.name ?? options.chatJid
-  const messages = getMessagesInWindow(options.chatJid, options.from, options.to).filter((message) => message.text)
+  const extra = chat?.extra_prompt ?? null
+  const previousEnd = options.force ? null : latestDigestEnd(options.chatJid)
+  const lower = previousEnd != null ? Math.max(options.from, previousEnd) : options.from
+  const exclusive = previousEnd != null && previousEnd >= options.from
+
+  const messages = (exclusive
+    ? getMessagesInWindow(options.chatJid, previousEnd + 1, options.to)
+    : getMessagesInWindow(options.chatJid, lower, options.to)
+  ).filter((message) => message.text)
 
   if (messages.length === 0) {
-    logger.info({ chatJid: options.chatJid }, 'нет сообщений за период, дайджест не нужен')
-    return null
+    const reason: SkipReason = previousEnd != null ? 'no_new' : 'empty'
+    logger.info({ chatJid: options.chatJid, reason }, 'дайджест не нужен')
+    return { skip: { chatJid: options.chatJid, chatName, reason } }
   }
 
-  const period = formatPeriod(options.from, options.to, settings.timezone)
+  const periodStart = messages[0]?.ts ?? lower
+  const periodEnd = options.to
+  const period = formatPeriod(periodStart, periodEnd, settings.timezone)
+  const forwardPhotos = Boolean(extra?.trim())
+  const photos = forwardPhotos ? collectPhotos(messages) : []
+  const overflow = Math.max(0, photosSourceCount(messages, forwardPhotos) - photos.length)
+  const needsModel = messages.some((message) => !isMediaPlaceholder(message.text))
   const useFake = config.DEMO_MODE && !config.llmEnabled
 
   let summaryMd: string
   let tokensIn = 0
   let tokensOut = 0
+  let model = settings.llmModel
 
-  if (useFake) {
-    summaryMd = fakeSummary(chatName, messages)
+  if (!needsModel) {
+    model = 'none'
+    summaryMd = [
+      '**Коротко:** новых текстовых сообщений нет, модель не вызывалась.',
+      photos.length > 0 ? `\n**Фото**\n${photoNote(photos.length, overflow)}` : '',
+    ].join('\n')
+  } else if (useFake) {
+    model = 'demo'
+    summaryMd = fakeSummary(chatName, messages, extra)
   } else {
     const chunks = chunkMessages(messages, config.LLM_CHUNK_CHARS)
     logger.info({ chatJid: options.chatJid, messages: messages.length, chunks: chunks.length }, 'собираю дайджест')
 
     if (chunks.length === 1) {
-      const result = await complete(settings.llmModel, singlePassPrompt(chatName, period, formatTranscript(messages)))
+      const result = await complete(
+        settings.llmModel,
+        singlePassPrompt(chatName, period, formatTranscript(messages), extra),
+      )
       summaryMd = result.text
       tokensIn = result.tokensIn
       tokensOut = result.tokensOut
@@ -136,26 +199,29 @@ export async function buildDigest(options: {
       for (const [index, chunk] of chunks.entries()) {
         const result = await complete(
           settings.llmModel,
-          chunkPrompt(index + 1, chunks.length, formatTranscript(chunk)),
+          chunkPrompt(index + 1, chunks.length, formatTranscript(chunk), extra),
         )
         notes.push(result.text)
         tokensIn += result.tokensIn
         tokensOut += result.tokensOut
       }
 
-      const reduced = await complete(settings.llmModel, reducePrompt(chatName, period, notes))
+      const reduced = await complete(settings.llmModel, reducePrompt(chatName, period, notes, extra))
       summaryMd = reduced.text
       tokensIn += reduced.tokensIn
       tokensOut += reduced.tokensOut
     }
   }
 
-  const model = useFake ? 'demo' : settings.llmModel
+  if (needsModel && photos.length > 0) {
+    summaryMd += `\n\n**Фото**\n${photoNote(photos.length, overflow)}`
+  }
+
   const id = insertDigest({
     chat_jid: options.chatJid,
     chat_name: chatName,
-    period_start: options.from,
-    period_end: options.to,
+    period_start: periodStart,
+    period_end: periodEnd,
     message_count: messages.length,
     model,
     summary_md: summaryMd,
@@ -168,15 +234,44 @@ export async function buildDigest(options: {
   markChatDigested(options.chatJid, Math.floor(Date.now() / 1000))
 
   return {
-    id,
-    chatJid: options.chatJid,
-    chatName,
-    summaryMd,
-    messageCount: messages.length,
-    periodStart: options.from,
-    periodEnd: options.to,
-    model,
-    tokensIn,
-    tokensOut,
+    digest: {
+      id,
+      chatJid: options.chatJid,
+      chatName,
+      summaryMd,
+      messageCount: messages.length,
+      periodStart,
+      periodEnd,
+      model,
+      tokensIn,
+      tokensOut,
+      photos,
+    },
   }
+}
+
+function photosSourceCount(messages: MessageRow[], forward: boolean): number {
+  if (!forward) return 0
+  return messages.filter((message) => message.kind === 'image' && message.media_json).length
+}
+
+function collectPhotos(messages: MessageRow[]): DigestPhoto[] {
+  return messages
+    .filter((message) => message.kind === 'image' && message.media_json)
+    .slice(-MAX_FORWARDED_PHOTOS)
+    .map((message) => ({
+      messageId: message.id,
+      chatJid: message.chat_jid,
+      fromMe: message.from_me === 1,
+      mediaJson: message.media_json as string,
+      senderName: message.sender_name,
+      ts: message.ts,
+      caption: isMediaPlaceholder(message.text) ? null : message.text,
+    }))
+}
+
+function photoNote(forwarded: number, overflow: number): string {
+  const sent = `${forwarded} фото уйдут в Telegram отдельными сообщениями. Содержимое картинок модель не смотрит.`
+  if (overflow <= 0) return sent
+  return `${sent} Ещё ${overflow} старше этого лимита не пересылаются.`
 }

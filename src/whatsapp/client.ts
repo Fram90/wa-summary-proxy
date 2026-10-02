@@ -17,6 +17,7 @@ import { logger } from '../logger.js'
 import { getOldestMessage, renameChat, saveMessages, upsertChat } from '../db/repo.js'
 import { toIncomingMessage } from './message.js'
 import { describeDisconnect, disconnectCode } from './disconnect.js'
+import { downloadImageSnapshot } from './media.js'
 import type { SessionState, WhatsappGateway } from './types.js'
 
 const QR_TTL_MS = 60_000
@@ -328,6 +329,12 @@ export class BaileysGateway implements WhatsappGateway {
       historySync: { chats: 0, messages: 0, isLatest: false, progress: null, updatedAt: null },
     })
     await this.start()
+  }
+
+  async downloadImage(chatJid: string, messageId: string, fromMe: boolean, mediaJson: string) {
+    if (!this.socket || this.state.status !== 'open') return null
+    const waId = messageId.startsWith(`${chatJid}:`) ? messageId.slice(chatJid.length + 1) : messageId
+    return downloadImageSnapshot(this.socket, chatJid, waId, fromMe, mediaJson)
   }
 
   async backfill(chatJid: string, batches: number): Promise<{ requested: number }> {

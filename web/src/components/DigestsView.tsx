@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { CheckCheck, FileText, Loader2, Send, Sparkles, TriangleAlert } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { toast } from 'sonner'
-import { api } from '@/lib/api'
+import { api, digestRunMessage } from '@/lib/api'
 import { countWithNoun, formatPeriod, formatRelative } from '@/lib/format'
 import type { Digest } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
@@ -54,11 +54,9 @@ export function DigestsView({
     setRunning(true)
     try {
       const result = await api.runDigest({ hours: Number(hours) })
-      if (result.digests.length === 0) {
-        toast.warning('Новых сообщений за этот период нет')
-      } else {
-        toast.success(`Готово: ${countWithNoun(result.digests.length, 'дайджест', 'дайджеста', 'дайджестов')}`)
-      }
+      const message = digestRunMessage(result)
+      if (message.ok) toast.success(message.text)
+      else toast.warning(message.text)
       await onChanged()
     } catch (error) {
       toast.error((error as Error).message)

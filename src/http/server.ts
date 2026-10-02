@@ -11,6 +11,7 @@ import {
   getRecentMessages,
   listChats,
   listDigests,
+  setChatPrompt,
   setChatTracked,
   stats,
 } from '../db/repo.js'
@@ -108,6 +109,15 @@ export async function createServer(deps: ServerDeps) {
     return { ok: true, jid, tracked }
   })
 
+  app.put('/api/chats/:jid/prompt', async (request, reply) => {
+    const { jid } = z.object({ jid: z.string() }).parse(request.params)
+    const { prompt } = z.object({ prompt: z.string().max(4000) }).parse(request.body)
+
+    if (!getChat(jid)) return reply.code(404).send({ error: 'Чат не найден' })
+    setChatPrompt(jid, prompt)
+    return { ok: true, jid, prompt: prompt.trim() }
+  })
+
   app.get('/api/chats/:jid/messages', async (request) => {
     const { jid } = z.object({ jid: z.string() }).parse(request.params)
     const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(200).default(40) }).parse(request.query)
@@ -145,6 +155,7 @@ export async function createServer(deps: ServerDeps) {
       .object({
         chatJid: z.string().optional(),
         hours: z.number().int().min(1).max(336).optional(),
+        force: z.boolean().optional(),
       })
       .parse(request.body ?? {})
 
@@ -152,11 +163,14 @@ export async function createServer(deps: ServerDeps) {
 
     try {
       if (body.chatJid) {
-        const digest = await deps.service.runForChat({ chatJid: body.chatJid, hours, trigger: 'manual' })
-        return { digests: digest ? [digest] : [] }
+        return await deps.service.runForChat({
+          chatJid: body.chatJid,
+          hours,
+          trigger: 'manual',
+          force: body.force,
+        })
       }
-      const digests = await deps.service.runForTrackedChats({ hours, trigger: 'manual' })
-      return { digests }
+      return await deps.service.runForTrackedChats({ hours, trigger: 'manual' })
     } catch (error) {
       logger.error({ err: error }, 'ручная сборка дайджеста не удалась')
       return reply.code(500).send({ error: (error as Error).message })

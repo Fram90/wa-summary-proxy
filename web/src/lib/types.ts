@@ -60,6 +60,7 @@ export interface Chat {
   last_message_at: number | null
   message_count: number
   last_digest_at: number | null
+  extra_prompt: string | null
 }
 
 export interface Message {

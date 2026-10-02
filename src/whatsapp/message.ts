@@ -1,5 +1,6 @@
 import { jidNormalizedUser, type WAMessage, type WAMessageContent } from '@whiskeysockets/baileys'
 import type { IncomingMessage } from '../db/repo.js'
+import { snapshotImage } from './media.js'
 
 export interface ExtractedContent {
   kind: string
@@ -167,5 +168,6 @@ export function toIncomingMessage(
     text: described.text,
     quotedText: quotedText(content),
     mentionsMe: mentionsUser(content, options.meJid),
+    mediaJson: described.kind === 'image' ? snapshotImage(content) : null,
   }
 }

@@ -144,6 +144,10 @@ export class DemoGateway implements WhatsappGateway {
     await this.start()
   }
 
+  async downloadImage(): Promise<null> {
+    return null
+  }
+
   async backfill(): Promise<{ requested: number }> {
     throw new Error('в демо-режиме догрузка истории недоступна')
   }

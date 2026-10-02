@@ -39,4 +39,9 @@ export interface WhatsappGateway {
   reset(): Promise<void>
   /** Просит WhatsApp прислать ещё одну порцию старой переписки для чата. */
   backfill(chatJid: string, batches: number): Promise<{ requested: number }>
+  /** Скачивает фото, сохранённое при приёме сообщения. null — фото недоступно. */
+  downloadImage(chatJid: string, messageId: string, fromMe: boolean, mediaJson: string): Promise<{
+    buffer: Buffer
+    mimetype: string
+  } | null>
 }

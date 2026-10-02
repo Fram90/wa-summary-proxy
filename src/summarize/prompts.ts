@@ -7,9 +7,21 @@ export const systemPrompt = `Ты — помощник занятого чело
 - Если по теме не было итога, так и пиши: обсуждали, решения нет.
 - Не пересказывай подряд каждое сообщение: группируй по темам.
 - Пиши по-человечески и коротко, без канцелярита и без вступлений вроде «в данном чате».
-- Формат ответа — Markdown.`
+- Формат ответа — Markdown.
+- Сообщения «[фото]» — это картинки. Их содержимое тебе не передаётся: не описывай, что на них изображено, и не выдумывай текст с картинки. Если есть подпись — используй только её.`
 
-export function chunkPrompt(index: number, total: number, transcript: string): string {
+function extraInstructions(extra?: string | null): string {
+  const text = extra?.trim()
+  if (!text) return ''
+  return `
+Дополнительные указания только для этого чата. Выполни их, но не добавляй фактов, которых нет в переписке.
+Если просят отдельный блок — поставь его в конце ответа с жирным заголовком и не дублируй его в других разделах. Если материала для блока не было, одна строка: «за период этого не было».
+
+${text}
+`
+}
+
+export function chunkPrompt(index: number, total: number, transcript: string, extra?: string | null): string {
   return `Это часть ${index} из ${total} переписки. Сделай из неё плотные рабочие заметки для последующей сборки дайджеста.
 
 Что зафиксировать:
@@ -18,28 +30,33 @@ export function chunkPrompt(index: number, total: number, transcript: string): s
 - вопросы и просьбы, оставшиеся без ответа;
 - сроки, даты, суммы, ссылки, названия файлов;
 - к кому лично обращались.
-
+${extraInstructions(extra)}
 Без вступлений и без выводов — только заметки списком.
 
 Переписка:
 ${transcript}`
 }
 
-export function reducePrompt(chatName: string, period: string, notes: string[]): string {
+export function reducePrompt(chatName: string, period: string, notes: string[], extra?: string | null): string {
   return `Собери итоговый дайджест по чату «${chatName}» за период ${period}.
 Ниже заметки по частям переписки, идущие по времени. Склей их в один связный дайджест, убрав повторы.
 
 ${notes.map((note, index) => `### Заметки, часть ${index + 1}\n${note}`).join('\n\n')}
-
+${extraInstructions(extra)}
 ${digestFormat}`
 }
 
-export function singlePassPrompt(chatName: string, period: string, transcript: string): string {
+export function singlePassPrompt(
+  chatName: string,
+  period: string,
+  transcript: string,
+  extra?: string | null,
+): string {
   return `Сделай дайджест по чату «${chatName}» за период ${period}.
 
 Переписка:
 ${transcript}
-
+${extraInstructions(extra)}
 ${digestFormat}`
 }
 
