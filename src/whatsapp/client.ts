@@ -1,10 +1,9 @@
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs/promises'
-import type { Boom } from '@hapi/boom'
 import {
   Browsers,
   DisconnectReason,
-  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
@@ -17,6 +16,7 @@ import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { getOldestMessage, renameChat, saveMessages, upsertChat } from '../db/repo.js'
 import { toIncomingMessage } from './message.js'
+import { describeDisconnect, disconnectCode } from './disconnect.js'
 import type { SessionState, WhatsappGateway } from './types.js'
 
 const QR_TTL_MS = 60_000
@@ -30,6 +30,7 @@ export class BaileysGateway implements WhatsappGateway {
   private chatNames = new Map<string, string>()
   private reconnectTimer: NodeJS.Timeout | null = null
   private stopped = false
+  private generation = 0
   private waLogger = logger.child({ module: 'baileys' }, { level: 'warn' })
 
   private state: SessionState = {
@@ -40,6 +41,7 @@ export class BaileysGateway implements WhatsappGateway {
     connectedAt: null,
     lastDisconnectAt: null,
     lastError: null,
+    lastDisconnectCode: null,
     reconnectAttempts: 0,
     historySync: { chats: 0, messages: 0, isLatest: false, progress: null, updatedAt: null },
   }
@@ -55,10 +57,12 @@ export class BaileysGateway implements WhatsappGateway {
 
   async start(): Promise<void> {
     this.stopped = false
+    const generation = ++this.generation
     await fs.mkdir(config.authDir, { recursive: true })
 
     const { state: authState, saveCreds } = await useMultiFileAuthState(config.authDir)
-    const { version } = await fetchLatestBaileysVersion().catch((error) => {
+    // Живая версия web.whatsapp.com, а не устаревший список из репозитория Baileys.
+    const { version } = await fetchLatestWaWebVersion({}).catch((error) => {
       logger.warn({ err: error }, 'не удалось узнать актуальную версию WhatsApp Web, беру встроенную')
       return { version: undefined as unknown as [number, number, number] }
     })
@@ -70,8 +74,9 @@ export class BaileysGateway implements WhatsappGateway {
         keys: makeCacheableSignalKeyStore(authState.keys, this.waLogger),
       },
       logger: this.waLogger,
-      // Профиль десктопа отдаёт больше истории при первичной синхронизации.
-      browser: Browsers.macOS('Desktop'),
+      // WhatsApp с июня 2026 отклоняет профиль Desktop (WIN32/DARWIN) кодом 428
+      // ещё до выдачи QR. Chrome объявляет себя как обычный браузер.
+      browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: config.WA_SYNC_FULL_HISTORY,
       shouldSyncHistoryMessage: () => config.WA_SYNC_FULL_HISTORY,
       // Иначе телефон решит, что вы за компьютером, и перестанет присылать пуши.
@@ -88,7 +93,10 @@ export class BaileysGateway implements WhatsappGateway {
     })
 
     socket.ev.on('creds.update', saveCreds)
-    socket.ev.on('connection.update', (update) => void this.onConnectionUpdate(update))
+    socket.ev.on('connection.update', (update) => {
+      if (this.generation !== generation) return
+      void this.onConnectionUpdate(update)
+    })
 
     socket.ev.on('messaging-history.set', ({ chats, contacts, messages, isLatest, progress }) => {
       for (const chat of chats) {
@@ -233,15 +241,19 @@ export class BaileysGateway implements WhatsappGateway {
     }
 
     if (connection === 'close') {
-      const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode
+      const statusCode = disconnectCode(lastDisconnect?.error)
       const loggedOut = statusCode === DisconnectReason.loggedOut
+      const lastError = describeDisconnect(statusCode, lastDisconnect?.error?.message)
 
       this.patchState({
         status: loggedOut ? 'logged_out' : 'reconnecting',
         lastDisconnectAt: Date.now(),
-        lastError: lastDisconnect?.error?.message ?? null,
+        lastError,
+        lastDisconnectCode: statusCode ?? null,
         qr: null,
       })
+
+      logger.warn({ statusCode, message: lastDisconnect?.error?.message }, lastError)
 
       if (loggedOut) {
         logger.error('устройство отвязано в WhatsApp — нужна повторная привязка по QR')
@@ -311,6 +323,8 @@ export class BaileysGateway implements WhatsappGateway {
       qr: null,
       connectedAt: null,
       reconnectAttempts: 0,
+      lastError: null,
+      lastDisconnectCode: null,
       historySync: { chats: 0, messages: 0, isLatest: false, progress: null, updatedAt: null },
     })
     await this.start()

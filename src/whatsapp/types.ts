@@ -25,6 +25,7 @@ export interface SessionState {
   connectedAt: number | null
   lastDisconnectAt: number | null
   lastError: string | null
+  lastDisconnectCode: number | null
   reconnectAttempts: number
   historySync: HistorySyncProgress
 }

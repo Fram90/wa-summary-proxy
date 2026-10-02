@@ -72,6 +72,7 @@ export class DemoGateway implements WhatsappGateway {
     connectedAt: null,
     lastDisconnectAt: null,
     lastError: null,
+    lastDisconnectCode: null,
     reconnectAttempts: 0,
     historySync: { chats: 0, messages: 0, isLatest: false, progress: null, updatedAt: null },
   }

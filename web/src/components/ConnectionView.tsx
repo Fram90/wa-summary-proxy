@@ -29,6 +29,7 @@ const pairingSteps = [
 export function ConnectionView({ state, onRefresh }: { state: AppState; onRefresh: () => Promise<void> }) {
   const [busy, setBusy] = useState<'reset' | 'demo' | null>(null)
   const { session } = state
+  const showPairing = session.status !== 'open' && !session.me
 
   const run = async (kind: 'reset' | 'demo', action: () => Promise<unknown>, successText: string) => {
     setBusy(kind)
@@ -42,8 +43,6 @@ export function ConnectionView({ state, onRefresh }: { state: AppState; onRefres
       setBusy(null)
     }
   }
-
-  const needsPairing = session.status === 'need_pairing' || session.status === 'logged_out'
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -62,7 +61,7 @@ export function ConnectionView({ state, onRefresh }: { state: AppState; onRefres
         </CardHeader>
 
         <CardContent className="space-y-6">
-          {needsPairing ? (
+          {showPairing ? (
             <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
               <div className="mx-auto shrink-0 rounded-xl border bg-white p-3 shadow-sm sm:mx-0">
                 {session.qr ? (
@@ -74,9 +73,19 @@ export function ConnectionView({ state, onRefresh }: { state: AppState; onRefres
                     height={224}
                   />
                 ) : (
-                  <div className="flex size-52 items-center justify-center text-sm text-neutral-500 sm:size-56">
-                    <Loader2 className="mr-2 size-4 animate-spin" />
-                    Генерирую QR…
+                  <div className="flex size-52 items-center justify-center text-center text-sm text-neutral-500 sm:size-56">
+                    {session.status === 'reconnecting' ? (
+                      <span>
+                        WhatsApp рвёт соединение до QR.
+                        <br />
+                        Переподключаюсь…
+                      </span>
+                    ) : (
+                      <>
+                        <Loader2 className="mr-2 size-4 animate-spin" />
+                        Генерирую QR…
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -146,9 +155,12 @@ export function ConnectionView({ state, onRefresh }: { state: AppState; onRefres
               <div>
                 <p className="font-medium">Последняя ошибка соединения</p>
                 <p className="text-muted-foreground">{session.lastError}</p>
+                {session.lastDisconnectCode != null && (
+                  <p className="text-xs text-muted-foreground">Код закрытия: {session.lastDisconnectCode}</p>
+                )}
                 {session.reconnectAttempts > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    Попыток переподключения: {session.reconnectAttempts}
+                    Попыток переподключения: {session.reconnectAttempts}. Подробности: docker compose logs --tail=80
                   </p>
                 )}
               </div>
