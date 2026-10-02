@@ -141,7 +141,7 @@ export function SettingsView({ state, onChanged }: { state: AppState; onChanged:
           <CardTitle>Telegram</CardTitle>
           <CardDescription>
             {state.telegram.enabled
-              ? 'Бот запущен. Получатель — один чат, обычно ваш личный диалог с ботом.'
+              ? 'Бот запущен. Дайджесты уходят в один чат: личку или группу. В группе напишите /here — id подставится сам.'
               : 'Бот не настроен: задайте TELEGRAM_BOT_TOKEN в .env и перезапустите приложение.'}
           </CardDescription>
         </CardHeader>
@@ -152,7 +152,7 @@ export function SettingsView({ state, onChanged }: { state: AppState; onChanged:
               id="chat-id"
               value={form.telegramChatId ?? ''}
               onChange={(event) => setForm({ ...form, telegramChatId: event.target.value })}
-              placeholder="Заполнится сам после /start"
+              placeholder="Личка после /start, группа — командой /here"
               className="font-mono"
             />
           </div>

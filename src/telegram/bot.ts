@@ -40,6 +40,10 @@ export class TelegramNotifier {
     return getSettings().telegramChatId
   }
 
+  private ownerId(): string | null {
+    return getSettings().telegramOwnerId
+  }
+
   async start(): Promise<void> {
     if (!config.TELEGRAM_BOT_TOKEN) {
       logger.warn('TELEGRAM_BOT_TOKEN не задан: дайджесты будут только в панели')
@@ -51,19 +55,29 @@ export class TelegramNotifier {
 
     bot.use(async (ctx, next) => {
       const incomingChatId = ctx.chat?.id?.toString()
-      if (!incomingChatId) return
+      const userId = ctx.from?.id?.toString()
+      if (!incomingChatId || !userId) return
 
-      const allowed = this.chatId
-      // Первый, кто написал боту, становится владельцем — дальше вход только для него.
-      if (!allowed) {
-        updateSettings({ telegramChatId: incomingChatId })
-        logger.info({ chatId: incomingChatId }, 'Telegram-чат для дайджестов сохранён')
+      const ownerId = this.ownerId()
+      const isPrivate = ctx.chat?.type === 'private'
+
+      // Владельцем становится тот, кто первым написал в личку. Группа сама по себе доступ не открывает.
+      if (!ownerId) {
+        if (!isPrivate) {
+          if (ctx.message?.text?.startsWith('/')) {
+            await ctx.reply('Сначала напишите боту /start в личные сообщения — так он запомнит владельца.')
+          }
+          return
+        }
+        updateSettings({ telegramOwnerId: userId, telegramChatId: this.chatId ?? incomingChatId })
+        logger.info({ userId, chatId: incomingChatId }, 'владелец Telegram-бота сохранён')
         await next()
         return
       }
 
-      if (incomingChatId !== allowed) {
-        await ctx.reply('Этот бот приватный и обслуживает только своего владельца.')
+      if (userId !== ownerId) {
+        if (ctx.callbackQuery) await ctx.answerCallbackQuery({ text: 'Команды доступны только владельцу бота' })
+        else if (isPrivate) await ctx.reply('Этот бот приватный и обслуживает только своего владельца.')
         return
       }
 
@@ -71,11 +85,17 @@ export class TelegramNotifier {
     })
 
     bot.command('start', async (ctx) => {
+      const settings = getSettings()
+      const here = settings.telegramChatId === ctx.chat.id.toString()
       await ctx.reply(
         [
           'Привет. Я приношу выжимки из ваших чатов WhatsApp.',
           '',
-          `Ваш chat id: <code>${ctx.chat.id}</code> — он сохранён, дайджесты будут приходить сюда.`,
+          here
+            ? 'Дайджесты приходят в этот чат.'
+            : `Дайджесты приходят в чат <code>${settings.telegramChatId ?? 'не задан'}</code>.`,
+          'Чтобы публиковать их в группу, добавьте бота в неё и напишите там /here.',
+          'Вернуть доставку в личку: /dm',
           '',
           'Команды:',
           '/summary [часы] — выжимка за последние N часов (по умолчанию из настроек)',
@@ -88,11 +108,29 @@ export class TelegramNotifier {
       )
     })
 
+    bot.command('here', async (ctx) => {
+      if (ctx.chat.type === 'private') {
+        await ctx.reply('Эту команду нужно отправить в группе, куда вы добавили бота.')
+        return
+      }
+      updateSettings({ telegramChatId: ctx.chat.id.toString() })
+      await ctx.reply('Дайджесты будут публиковаться в этом чате. Команды по-прежнему слушаю только у вас.')
+    })
+
+    bot.command('dm', async (ctx) => {
+      const ownerId = this.ownerId()
+      if (!ownerId) return
+      updateSettings({ telegramChatId: ownerId })
+      await ctx.reply('Дайджесты снова приходят в личные сообщения.')
+    })
+
     bot.command('help', (ctx) =>
       ctx.reply(
         [
           '/summary [часы] — выжимка по отслеживаемым чатам',
           '/chats — включить или выключить слежение за чатом',
+          '/here — публиковать дайджесты в этот групповой чат',
+          '/dm — снова присылать дайджесты в личку',
           '/status — состояние сессии WhatsApp и статистика',
           '/window N — окно планового дайджеста в часах',
           '/settings — расписание, модель, таймзона',
@@ -119,6 +157,8 @@ export class TelegramNotifier {
           `<b>Расписание:</b> ${settings.digestCron} (${settings.timezone})`,
           `<b>Окно дайджеста:</b> ${settings.digestWindowHours} ч`,
           `<b>Модель:</b> ${settings.llmModel}`,
+          '',
+          `<b>Куда слать дайджесты:</b> <code>${settings.telegramChatId ?? 'не задан'}</code>`,
         ]
           .filter(Boolean)
           .join('\n'),
@@ -135,8 +175,9 @@ export class TelegramNotifier {
           `<b>Окно:</b> ${settings.digestWindowHours} ч`,
           `<b>Модель:</b> ${settings.llmModel}`,
           `<b>Хранить сообщения:</b> ${settings.retentionDays} дней`,
+          `<b>Куда слать:</b> <code>${settings.telegramChatId ?? 'не задан'}</code>`,
           '',
-          'Расписание и модель меняются в веб-панели, окно — командой /window N.',
+          'Группа: добавьте бота и напишите там /here. Обратно в личку: /dm.',
         ].join('\n'),
         { parse_mode: 'HTML' },
       )
@@ -221,6 +262,8 @@ export class TelegramNotifier {
     await bot.api.setMyCommands([
       { command: 'summary', description: 'Выжимка за последние N часов' },
       { command: 'chats', description: 'Выбрать отслеживаемые чаты' },
+      { command: 'here', description: 'Публиковать дайджесты в этот чат' },
+      { command: 'dm', description: 'Снова присылать дайджесты в личку' },
       { command: 'status', description: 'Состояние подключения' },
       { command: 'window', description: 'Окно планового дайджеста' },
       { command: 'settings', description: 'Текущие настройки' },

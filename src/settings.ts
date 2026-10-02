@@ -8,7 +8,10 @@ const settingsSchema = z.object({
   digestWindowHours: z.number().int().min(1).max(24 * 14),
   timezone: z.string().min(1),
   llmModel: z.string().min(1),
+  /** Куда слать дайджесты: личка или id группы (отрицательное число). */
   telegramChatId: z.string().nullable(),
+  /** User id того, кто может командовать ботом. В личке совпадает с chat id. */
+  telegramOwnerId: z.string().nullable(),
   retentionDays: z.number().int().min(1).max(3650),
 })
 
@@ -22,6 +25,7 @@ const defaults: AppSettings = {
   timezone: config.DIGEST_TZ,
   llmModel: config.LLM_MODEL,
   telegramChatId: config.TELEGRAM_CHAT_ID ?? null,
+  telegramOwnerId: null,
   retentionDays: config.RETENTION_DAYS,
 }
 
@@ -39,7 +43,12 @@ export function getSettings(): AppSettings {
   }
 
   const parsed = settingsSchema.safeParse({ ...defaults, ...JSON.parse(raw) })
-  cache = parsed.success ? parsed.data : defaults
+  const data = parsed.success ? parsed.data : defaults
+  // Раньше в telegramChatId хранилась личка, и она же была единственным допуском.
+  if (!data.telegramOwnerId && data.telegramChatId && !data.telegramChatId.startsWith('-')) {
+    data.telegramOwnerId = data.telegramChatId
+  }
+  cache = data
   return cache
 }
 
